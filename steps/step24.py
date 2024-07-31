@@ -43,3 +43,4 @@ if __name__ == "__main__":
     z.backward()
     print(x.grad, y.grad)
     print()
+    

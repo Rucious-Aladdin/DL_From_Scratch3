@@ -1,1 +1,3 @@
 .venv/*
+steps/__pycache__/*
+dezero/__pycache__/*
