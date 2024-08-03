@@ -33,7 +33,7 @@ def get_dot_graph(output, verbose=True):
     seen_set = set()
 
     def add_func(f):
-        if f is not seen_set:
+        if f not in seen_set:
             funcs.append(f)
             seen_set.add(f)
     
