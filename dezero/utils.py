@@ -1,6 +1,9 @@
-import numpy as np
 import os
 import subprocess
+import urllib.request
+import numpy as np
+from dezero import as_variable
+from dezero import Variable
 
 ## step26
 def _dot_var(v, verbose=False):
@@ -97,6 +100,80 @@ def sum_to(x, shape):
         y = y.squeeze(lead_axis)
     return y
 
+def show_progress(block_num, block_size, total_size):
+    bar_template = "\r[{}] {:.2f}%"
+
+    downloaded = block_num * block_size
+    p = downloaded / total_size * 100
+    i = int(downloaded / total_size * 30)
+    if p >= 100.0: p = 100.0
+    if i >= 30: i = 30
+    bar = "#" * i + "." * (30 - i)
+    print(bar_template.format(bar, p), end='')
+
+def logsumexp(x, axis=1):
+    m = x.max(axis=axis, keepdims=True)
+    y = x - m
+    np.exp(y, out=y)
+    s = y.sum(axis=axis, keepdims=True)
+    np.log(s, out=s)
+    m += s
+    return m
+
+cache_dir = os.path.join(os.path.expanduser('~'), '.dezero')
+def get_file(url, file_name=None):
+    """Download a file from the `url` if it is not in the cache.
+
+    The file at the `url` is downloaded to the `~/.dezero`.
+
+    Args:
+        url (str): URL of the file.
+        file_name (str): Name of the file. It `None` is specified the original
+            file name is used.
+
+    Returns:
+        str: Absolute path to the saved file.
+    """
+    if file_name is None:
+        file_name = url[url.rfind('/') + 1:]
+    file_path = os.path.join(cache_dir, file_name)
+
+    if not os.path.exists(cache_dir):
+        os.mkdir(cache_dir)
+
+    if os.path.exists(file_path):
+        return file_path
+
+    
+    print("Downloading: " + file_name)
+    # headers 추가
+    headers = {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/58.0.3029.110 Safari/537.3'
+    }
+    # Request 객체를 생성
+    req = urllib.request.Request(url, headers=headers)
+    try:
+        # urlretrieve 대신 urlopen을 사용하여 데이터 다운로드
+        with urllib.request.urlopen(req) as response, open(file_path, 'wb') as out_file:
+            data = response.read()
+            out_file.write(data)
+    except (Exception, KeyboardInterrupt) as e:
+        if os.path.exists(file_path):
+            os.remove(file_path)
+        raise
+    print(" Done")
+
+    return file_path
+
+def pair(x):
+    if isinstance(x, int):
+        return (x, x)
+    elif isinstance(x, tuple):
+        assert len(x) == 2
+        return x
+    else:
+        raise ValueError
+
 if __name__ == "__main__":
     from core_simple import Variable
 
@@ -122,5 +199,6 @@ if __name__ == "__main__":
 
     print("plot_dot_graph:")
     plot_dot_graph(y, verbose=True, to_file="graph.png")
+
 
         

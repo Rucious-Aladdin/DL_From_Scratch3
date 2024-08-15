@@ -1,6 +1,8 @@
 import numpy as np
 from dezero.core import Function, as_variable
 from dezero import utils
+from dezero import Variable
+from dezero import as_array
 class Sin(Function):
     def forward(self, x):
         y = np.sin(x)
@@ -231,6 +233,49 @@ class Log(Function):
         gx = gy / x
         return gx
 
+class SoftmaxCrossEntropy(Function):
+    def forward(self, x, t):
+        N = x.shape[0]
+        log_z = utils.logsumexp(x, axis=1)
+        log_p = x - log_z
+        log_p = log_p[np.arange(N), t.ravel()]
+        y = -log_p.sum() / np.float32(N)
+        return y
+
+    def backward(self, gy):
+        x, t = self.inputs
+        N, CLS_NUM = x.shape
+
+        gy *= 1/N
+        y = softmax(x)
+        t_onehot = np.eye(CLS_NUM, dtype=t.dtype)[t.data]
+        y = (y - t_onehot) * gy
+        return y
+
+class ReLU(Function):
+    def forward(self, x):
+        y = np.maximum(x, 0.0)
+        return y
+    
+    def backward(self, gy):
+        x, = self.inputs
+        mask = x.data > 0
+        gx = gy * mask
+        return gx
+
+def relu(x):
+    return ReLU()(x)
+
+def accuracy(y, t):
+    y, t = as_variable(y), as_variable(t)
+    pred = y.data.argmax(axis=1).reshape(t.shape)
+    result = (pred == t.data)
+    acc = result.mean()
+    return Variable(as_array(acc))
+
+def softmax_cross_entropy(x, t):
+    return SoftmaxCrossEntropy()(x, t)
+
 def log(x):
     return Log()(x)
 
@@ -258,7 +303,8 @@ def softmax(x, axis=1):
     return Softmax(axis)(x)
 
 def get_item(x, slices):
-    return GetItem(slices)(x)
+    f = GetItem(slices)
+    return f(x)
 
 def sigmoid(x):
     return Sigmoid()(x)
