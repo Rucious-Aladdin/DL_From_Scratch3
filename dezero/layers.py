@@ -149,6 +149,74 @@ class Conv2d(Layer):
         y = F.conv2d(x, self.W, self.b, self.stride, self.pad)
         return y
 
+class RNN(Layer):
+    def __init__(self, hidden_size, in_size=None):
+        super().__init__()
+        self.x2h = Linear(hidden_size, in_size=in_size)
+        self.h2h = Linear(hidden_size, in_size=hidden_size, nobias=True)
+        self.h = None
+    
+    def reset_state(self):
+        self.h = None
+
+    def forward(self, x):
+        if self.h is None:
+            h_new = F.tanh(self.x2h(x))
+        else:
+            h_new = F.tanh(self.x2h(x) + self.h2h(self.h))
+        self.h = h_new
+        return h_new
+
+class LSTM(Layer):
+    def __init__(self, hidden_size, in_size=None):
+        super().__init__()
+
+        H, I = hidden_size, in_size
+        ## forget gate
+        self.x2f = Linear(H, in_size=I)
+        self.h2f = Linear(H, in_size=H, nobias=True)
+
+        ## input gate
+        self.x2i = Linear(H, in_size=I)
+        self.h2i = Linear(H, in_size=H, nobias=True)
+
+        ## output gate
+        self.x2o = Linear(H, in_size=I)
+        self.h2o = Linear(H, in_size=H, nobias=True)
+
+        ## memory cell(cell_state)
+        self.x2c = Linear(H, in_size=I)
+        self.h2c = Linear(H, in_size=H, nobias=True)
+
+        self.reset_state()
+
+    def reset_state(self):
+        self.h, self.c = None, None
+    
+    def forward(self, x):
+        if self.h is None:
+            f = F.sigmoid(self.x2f(x))
+            i = F.sigmoid(self.x2i(x))
+            o = F.sigmoid(self.x2o(x))
+            c = F.tanh(self.x2c(x))
+
+        else:
+            f = F.sigmoid(self.x2f(x) + self.h2f(self.h))
+            i = F.sigmoid(self.x2i(x) + self.h2i(self.h))
+            o = F.sigmoid(self.x2o(x) + self.h2o(self.h))
+            c = F.tanh(self.x2c(x) + self.h2c(self.h))
+        
+        if self.c is None:
+            c_new = f * c
+        else:
+            c_new = f * self.c + i * c # next cell state(Adamar product)
+        
+        h_new = o * F.tanh(c_new)
+
+        self.h, self.c = h_new, c_new
+    
+        return h_new # output is new hidden state
+
 if __name__ == "__main__":
 
     from core import Variable
