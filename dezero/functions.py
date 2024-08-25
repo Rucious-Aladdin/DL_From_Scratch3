@@ -1,11 +1,13 @@
 import numpy as np
 from dezero.core import Function, as_variable
-from dezero import utils
+from dezero import utils, cuda
 from dezero import Variable
 from dezero import as_array
+import dezero
 class Sin(Function):
     def forward(self, x):
-        y = np.sin(x)
+        xp = cuda.get_array_module(x)
+        y = xp.sin(x)
         return y
 
     def backward(self, gy):
@@ -15,7 +17,8 @@ class Sin(Function):
     
 class Exp(Function):
     def forward(self, x):
-        y = np.exp(x)
+        xp = cuda.get_array_module(x)
+        y = xp.exp(x)
         return y
 
     def backward(self, gy):
@@ -28,7 +31,8 @@ def exp(x):
 
 class Cos(Function):
     def forward(self, x):
-        y = np.cos(x)
+        xp = cuda.get_array_module(x)
+        y = xp.cos(x)
         return y
     
     def backward(self, gy):
@@ -38,7 +42,8 @@ class Cos(Function):
     
 class Tanh(Function):
     def forward(self, x):
-        y = np.tanh(x)
+        xp = cuda.get_array_module(x)
+        y = xp.tanh(x)
         return y
 
     def backward(self, gy):
@@ -60,20 +65,26 @@ class Reshape(Function):
     def backward(self, gy):
         # NOTE: 원래 형상으로 되돌리기 위해 저장해둔 self.x_shape를 인수로 넘김.
         return reshape(gy, self.x_shape)
-    
-class Transpose(Function):
-    def forward(self, x):
-        y = np.transpose(x)
-        return y
-
-    def backward(self, gy):
-        gx = transpose(gy)
-        return gx
 
 def reshape(x, shape):
     if x.shape == shape:
         return as_variable(x)
     return Reshape(shape)(x)
+class Transpose(Function):
+    def __init__(self, axes=None):
+        self.axes = axes
+
+    def forward(self, x):
+        y = x.transpose(self.axes)
+        return y
+
+    def backward(self, gy):
+        if self.axes is None:
+            return transpose(gy)
+
+        axes_len = len(self.axes)
+        inv_axes = tuple(np.argsort([ax % axes_len for ax in self.axes]))
+        return transpose(gy, inv_axes)
 
 class Sum(Function):
     def __init__(self, axis, keepdims):
@@ -96,8 +107,9 @@ class BroadcastTo(Function):
         self.shape = shape
     
     def forward(self, x):
+        xp = cuda.get_array_module(x)
         self.x_shape = x.shape
-        y = np.broadcast_to(x, self.shape)
+        y = xp.broadcast_to(x, self.shape)
         return y
 
     def backward(self, gy):
@@ -157,7 +169,8 @@ class Linear(Function):
 
 class Sigmoid(Function):
     def forward(self, x):
-        y = np.tanh(x * .5) * .5 + .5
+        xp = cuda.get_array_module(x)
+        y = xp.tanh(x * .5) * .5 + .5
         return y
 
     def backward(self, gy):
@@ -171,8 +184,13 @@ class GetItemGrad(Function):
         self.in_shape = in_shape
     
     def forward(self, gy):
-        gx = np.zeros(self.in_shape)
-        np.add.at(gx, self.slices, gy)
+        xp = dezero.cuda.get_array_module(gy)
+        gx = xp.zeros(self.in_shape, dtype=gy.dtype)
+
+        if xp is np:
+            np.add.at(gx, self.slices, gy)
+        else:
+            xp.scatter_add(gx, self.slices, gy)
         return gx
     
     def backward(self, ggx):
@@ -190,13 +208,15 @@ class GetItem(Function):
         x, = self.inputs
         f = GetItemGrad(self.slices, x.shape)
         return f(gy)
+
 class Softmax(Function):
     def __init__(self, axis=1):
         self.axis = axis
 
     def forward(self, x):
+        xp = cuda.get_array_module(x)
         y = x - x.max(axis=self.axis, keepdims=True)
-        y = np.exp(y)
+        y = xp.exp(y)
         y /= y.sum(axis=self.axis, keepdims=True)
         return y
 
@@ -207,13 +227,28 @@ class Softmax(Function):
         gx -= y * sumdx
         return gx
 
+class LogSoftmax(Function):
+    def __init__(self, axis=1):
+        self.axis = axis
+
+    def forward(self, x):
+        log_z = utils.logsumexp(x, self.axis)
+        y = x - log_z
+        return y
+
+    def backward(self, gy):
+        y = self.outputs[0]()
+        gx = gy - exp(y) * gy.sum(axis=self.axis, keepdims=True)
+        return gx
+
 class Clip(Function):
     def __init__(self, x_min, x_max):
         self.x_min = x_min
         self.x_max = x_max
     
     def forward(self, x):
-        y = np.clip(x, self.x_min, self.x_max)
+        xp = cuda.get_array_module(x)
+        y = xp.clip(x, self.x_min, self.x_max)
         return y
     
     def backward(self, gys):
@@ -225,7 +260,8 @@ class Clip(Function):
 
 class Log(Function):
     def forward(self, x):
-        y = np.log(x)
+        xp = cuda.get_array_module(x)
+        y = xp.log(x)
         return y
     
     def backward(self, gy):
@@ -248,13 +284,15 @@ class SoftmaxCrossEntropy(Function):
 
         gy *= 1/N
         y = softmax(x)
-        t_onehot = np.eye(CLS_NUM, dtype=t.dtype)[t.data]
+        xp = cuda.get_array_module(t.data)
+        t_onehot = xp.eye(CLS_NUM, dtype=t.dtype)[t.data]
         y = (y - t_onehot) * gy
         return y
 
 class ReLU(Function):
     def forward(self, x):
-        y = np.maximum(x, 0.0)
+        xp = cuda.get_array_module(x)
+        y = xp.maximum(x, 0.0)
         return y
     
     def backward(self, gy):
@@ -262,6 +300,21 @@ class ReLU(Function):
         mask = x.data > 0
         gx = gy * mask
         return gx
+    
+def dropout(x, dropout_ratio=0.5):
+    x = as_variable(x)
+
+    if dezero.Config.train:
+        xp = cuda.get_array_module(x)
+        mask = xp.random.rand(*x.shape) > dropout_ratio
+        scale = xp.array(1.0 - dropout_ratio).astype(xp.float32)
+        y = x * mask / scale
+        return y
+    else:
+        return x
+
+def log_softmax(x, axis=1):
+    return LogSoftmax(axis)(x)
 
 def relu(x):
     return ReLU()(x)
@@ -306,6 +359,16 @@ def get_item(x, slices):
     f = GetItem(slices)
     return f(x)
 
+def expand_dims(x, axis):
+    x = as_variable(x)
+    shape = list(x.shape)
+    shape.insert(axis, 1)
+    return reshape(x, tuple(shape))
+
+def flatten(x):
+    """Flattens the input. Does not affect the batch size."""
+    return reshape(x, (x.shape[0], -1))
+
 def sigmoid(x):
     return Sigmoid()(x)
 
@@ -336,11 +399,18 @@ def broadcast_to(x, shape):
         return as_variable(x)
     return BroadcastTo(shape)(x)
 
+def average(x, axis=None, keepdims=False):
+    x = as_variable(x)
+    y = sum(x, axis, keepdims)
+    return y * (y.data.size / x.data.size)
+
+mean = average
+
 def sum(x, axis=None, keepdims=False):
     return Sum(axis, keepdims)(x)
 
-def transpose(x):
-    return Transpose()(x)
+def transpose(x, axes=None):
+    return Transpose(axes)(x)
 
 def sin(x):
     return Sin()(x)
@@ -350,3 +420,19 @@ def cos(x):
 
 def tanh(x):
     return Tanh()(x)
+
+from dezero.functions_conv import conv2d
+#from dezero.functions_conv import deconv2d
+from dezero.functions_conv import conv2d_simple
+from dezero.functions_conv import im2col
+from dezero.functions_conv import col2im
+from dezero.functions_conv import pooling_simple
+from dezero.functions_conv import pooling
+#from dezero.functions_conv import average_pooling
+from dezero.core import add
+from dezero.core import sub
+from dezero.core import rsub
+from dezero.core import mul
+from dezero.core import div
+from dezero.core import neg
+from dezero.core import pow
